@@ -12,18 +12,23 @@ TPROC=$2
 cleanup() {
   sudo rm -rf /mnt/ramdisk/*
   sudo umount /mnt/ramdisk
+  sudo umount /dev/zram0
+  sudo rmmod zram
 }
+cleanup
 if $CLEAN_ON_EXIT; then
   trap "cleanup" SIGHUP SIGINT SIGTERM EXIT
 fi
 
 echo "Install required packages"
 if which apt-get &>/dev/null; then
- sudo apt-get install build-essential
+  sudo apt-get install build-essential
 elif which dnf &>/dev/null; then
- sudo dnf install -y @development-tools
+  sudo dnf install -y @development-tools
+elif which pacman &>/dev/null; then
+  sudo pacman -S --needed base-devel
 else
- exit 1
+  exit 1
 fi
 
 if $USE_RAMDISK; then
@@ -65,13 +70,17 @@ cat /proc/sys/kernel/randomize_va_space
 # start journal process in different working directory
 pushd /
   journalctl -kf | sed 's/^/[KERN] /' &
+  PID_TO_KILL="$(jobs -p | tail -n 1)"
+  echo "PID TO KILL: $PID_TO_KILL"
 popd
 echo "Using ${NPROC} parallel processes"
 
 START=$(date +%s)
 for ((I=0;$I<$NPROC;I++)); do
   (./buildloop.sh "loop-$I" "$TPROC" || echo "TIME TO FAIL: $(($(date +%s)-${START})) s") | sed "s/^/\[loop-${I}\] /" &
+  PIDS="$PIDS $!"
   sleep 1
 done
 
-wait
+wait $PIDS
+kill $PID_TO_KILL
